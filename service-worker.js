@@ -1,20 +1,20 @@
 function getBrowser() {
-	if (typeof chrome !== "undefined") {
-		if (typeof browser !== "undefined") {
-			return "Firefox";
-		} else {
-			return "Chrome";
-		}
-	} else {
-		return "Edge";
-	}
+  if (typeof chrome !== "undefined") {
+    if (typeof browser !== "undefined") {
+      return "Firefox";
+    } else {
+      return "Chrome";
+    }
+  } else {
+    return "Edge";
+  }
 }
 
 const userBrowser = getBrowser();
 
-chrome.declarativeNetRequest.updateEnabledRulesets(
-	{ enableRulesetIds: ["change_origin"] }
-)
+chrome.declarativeNetRequest.updateEnabledRulesets({
+  enableRulesetIds: ["change_origin"],
+});
 
 // chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
 // 	if (changeInfo.status === "complete") {
@@ -26,99 +26,165 @@ chrome.declarativeNetRequest.updateEnabledRulesets(
 // });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-	if (message.type === "GET_EXTENSION_INFO") {
-		const extensionInfo = {
-			name: chrome.runtime.getManifest().name,
-			version: chrome.runtime.getManifest().version
-		};
-		sendResponse(extensionInfo);
-	}
-	return true;
+  if (message.type === "GET_EXTENSION_INFO") {
+    const extensionInfo = {
+      name: chrome.runtime.getManifest().name,
+      version: chrome.runtime.getManifest().version,
+    };
+    sendResponse(extensionInfo);
+  }
+  return true;
 });
 
 function sendEdpMessage(message) {
-	chrome.tabs.query({ url: ["https://*.ecole-directe.plus/*"] }, (tabs) => {
-		tabs.forEach(tab => {
-			chrome.tabs.sendMessage(tab.id, message);
-		});
-	});
+  chrome.tabs.query({ url: ["https://*.ecole-directe.plus/*"] }, (tabs) => {
+    tabs.forEach((tab) => {
+      chrome.tabs.sendMessage(tab.id, message);
+    });
+  });
 }
 
 async function updateCookiesRules(cookies) {
-	const removeRuleIds = await chrome.declarativeNetRequest.getDynamicRules()
-		.then(rules => rules.map(rule => rule.id));
+  const removeRuleIds = await chrome.declarativeNetRequest
+    .getDynamicRules()
+    .then((rules) => rules.map((rule) => rule.id));
 
-	const rules = [];
-	const gtk = cookies.find((cookie) => cookie.split("=")[0].toLowerCase() === "gtk")?.split("=")[1];
+  const rules = [];
+  const gtk = cookies
+    .find((cookie) => cookie.split("=")[0].toLowerCase() === "gtk")
+    ?.split("=")[1];
 
-	if (!gtk) {
-		sendEdpMessage({ action: "noGtkCookie"})
-		return;
-	}
+  if (!gtk) {
+    sendEdpMessage({ action: "noGtkCookie" });
+    return;
+  }
 
-	rules.push({
-		id: 10,
-		priority: 1,
-		condition: {
-			urlFilter: "||ecoledirecte.com",
-			requestMethods: ["post"],
-			resourceTypes: ["xmlhttprequest", "main_frame", "sub_frame"],
-			excludedInitiatorDomains: ["www.ecoledirecte.com", "ecoledirecte.com"]
-		},
-		action: {
-			type: "modifyHeaders",
-			requestHeaders: [
-				{
-					header: "X-GTK",
-					operation: "set",
-					value: gtk
-				},
-				{
-					header: "Cookie",
-					operation: "set",
-					value: cookies.join(";")
-				},
-			]
-		},
-	});
+  rules.push({
+    id: 10,
+    priority: 1,
+    condition: {
+      urlFilter: "||ecoledirecte.com",
+      requestMethods: ["post"],
+      resourceTypes: ["xmlhttprequest", "main_frame", "sub_frame"],
+      excludedInitiatorDomains: ["www.ecoledirecte.com", "ecoledirecte.com"],
+    },
+    action: {
+      type: "modifyHeaders",
+      requestHeaders: [
+        {
+          header: "X-GTK",
+          operation: "set",
+          value: gtk,
+        },
+        {
+          header: "Cookie",
+          operation: "set",
+          value: cookies.join(";"),
+        },
+      ],
+    },
+  });
 
-	await chrome.declarativeNetRequest.updateDynamicRules({
-		removeRuleIds: removeRuleIds,
-		addRules: rules
-	});
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: removeRuleIds,
+    addRules: rules,
+  });
 
-	sendEdpMessage({ action: "gtkRulesUpdated" });
+  sendEdpMessage({ action: "gtkRulesUpdated" });
 }
 
 function interceptCookieGTK(details) {
-	const url = new URL(details.url);
-	const queryParams = new URLSearchParams(url.search);
-	if (queryParams.get("gtk") !== "1") return;
+  const url = new URL(details.url);
+  const queryParams = new URLSearchParams(url.search);
+  if (queryParams.get("gtk") !== "1") return;
 
-	const headers = details.responseHeaders;
-	const cookies = [];
+  const headers = details.responseHeaders;
+  const cookies = [];
 
-	for (const { name, value } of headers) {
-		if (name !== "set-cookie") continue;
-		if (userBrowser === "Firefox") {
-			value.split("\n").forEach((cookie) => {
-				cookies.push(cookie.split(";")[0]);
-			})
-			break;
-		}
-		cookies.push(value.split(";")[0]);
-	}
-	if (cookies.length) {
-		updateCookiesRules(cookies);
-	} else {
-		sendEdpMessage({ action: "noCookie" });
-	}
+  for (const { name, value } of headers) {
+    if (name.toLowerCase() !== "set-cookie") continue;
+    if (userBrowser === "Firefox") {
+      value.split("\n").forEach((cookie) => {
+        cookies.push(cookie.split(";")[0]);
+      });
+      break;
+    }
+    cookies.push(value.split(";")[0]);
+  }
+  if (cookies.length) {
+    updateCookiesRules(cookies);
+  } else {
+    sendEdpMessage({ action: "noCookie" });
+  }
 
-	return { responseHeaders: headers };
+  return { responseHeaders: headers };
+}
+
+async function updateA2FTokenRules(token) {
+  const removeRuleIds = await chrome.declarativeNetRequest
+    .getDynamicRules()
+    .then((rules) => rules.map((rule) => rule.id));
+
+  if (!token) return;
+
+  const rules = [
+    {
+      id: 11,
+      priority: 1,
+      condition: {
+        urlFilter: "*://api.ecoledirecte.com/v3/*",
+        requestMethods: ["post"],
+        resourceTypes: ["xmlhttprequest"],
+      },
+      action: {
+        type: "modifyHeaders",
+        requestHeaders: [
+          {
+            header: "2fa-token",
+            operation: "set",
+            value: token,
+          },
+        ],
+      },
+    },
+  ];
+
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds,
+    addRules: rules,
+  });
+
+  sendEdpMessage({ action: "a2fTokenRulesUpdated" });
+}
+
+function interceptA2FToken(details) {
+  const headers = details.responseHeaders;
+  let a2fToken;
+
+  for (const { name, value } of headers) {
+    if (name.toLowerCase() === "2fa-token") {
+      a2fToken = value;
+      break;
+    }
+  }
+  if (a2fToken) {
+    updateA2FTokenRules(a2fToken);
+  }
+  return { responseHeaders: headers };
 }
 
 chrome.webRequest.onHeadersReceived.addListener(
-	interceptCookieGTK,
-	{ urls: ["*://api.ecoledirecte.com/v3/login.awp*"] },
-	userBrowser === "Firefox" ? ["responseHeaders"] : ["responseHeaders", "extraHeaders"]
+  interceptCookieGTK,
+  { urls: ["*://api.ecoledirecte.com/v3/login.awp*"] },
+  userBrowser === "Firefox"
+    ? ["responseHeaders"]
+    : ["responseHeaders", "extraHeaders"]
+);
+
+chrome.webRequest.onHeadersReceived.addListener(
+  interceptA2FToken,
+  { urls: ["*://api.ecoledirecte.com/v3/*"] },
+  userBrowser === "Firefox"
+    ? ["responseHeaders"]
+    : ["responseHeaders", "extraHeaders"]
 );
